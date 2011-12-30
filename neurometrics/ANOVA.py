@@ -204,6 +204,7 @@ def do_session(ds,
                scoring = score,
                targets = 'quantized_distance',
                n_jobs = 1,
+               n_features = 3000,
                learning_curve = False,
                permutation_test = False):
 
@@ -224,13 +225,13 @@ def do_session(ds,
 
     ds = ds[numpy.logical_not(numpy.logical_or(ds.sa.move, ds.sa.cue)), :]
 
-    if ds.nfeatures > 3000:
-        fs = SelectKBest(k=3000)
+    if ds.nfeatures > n_features:
+        fs = SelectKBest(k=n_features)
         fs.fit(ds.samples, ds.sa.search > 0)
 
     ds = ds[ds.sa.search > 0, :]
 
-    if ds.nfeatures > 3000:
+    if ds.nfeatures > n_features:
         ds = ds[:, fs.get_support()]
 
     logger.info('Configuring cross validation')
@@ -269,7 +270,7 @@ def do_session(ds,
         
     result = {}
     result['datetime'] = datetime.datetime.now()
-    if ds.nfeatures > 3000:
+    if ds.nfeatures > n_features:
         result['fs'] = fs
     result['mapper'] = ds.mapper
     #result['clf'] = clf

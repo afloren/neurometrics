@@ -9,9 +9,33 @@ import os
 import stat
 import string
 import numpy as np
+import nibabel
 
 import nilearn
 import nilearn.image
+
+class FixDimensionsInputSpec(BaseInterfaceInputSpec):
+    in_file = File(desc='inpute volume to be corrected', exists=True, mandatory=True)
+
+class FixDimensionsOutputSpec(TraitedSpec):
+    out_file = File(desc='corrected volume', exists=True)
+
+class FixDimensions(BaseInterface):
+    input_spec = FixDimensionsInputSpec
+    output_spec = FixDimensionsOutputSpec
+
+    def _run_interface(self, runtime):
+        nim = nibabel.load(self.inputs.in_file)
+        fixed = neurometrics.utility.arr2nifti(nim.get_data()[:,None,None])
+        fixed.to_filename(self._list_outputs()['out_file'])
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        fname = self.inputs.in_file
+        base = os.path.splitext(os.path.basename(fname))[0]
+        outputs['out_file'] = os.path.abspath(base+'_fixed.nii.gz')
+        return outputs
 
 class ExtractVolumeInputSpec(BaseInterfaceInputSpec):
     in_file = File(desc='input volume', exists=True, mandatory=True)
