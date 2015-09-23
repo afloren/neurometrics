@@ -55,7 +55,7 @@ def create_extract_functional_workflow(name='extract_functional',
     return extract_functional
 
 def create_align_to_anatomy_workflow(name='align_to_anatomy',
-                                     format_string = 'anatomy_to_inplane'):
+                                     format_string = 'inplane_to_anatomy'):
     
     align_to_anatomy = pe.Workflow(name=name)
 
@@ -73,8 +73,8 @@ def create_align_to_anatomy_workflow(name='align_to_anatomy',
     outputs = pe.Node(interface=util.IdentityInterface(fields=['xfm_file','strip_file']), name='outputs')
 
     align_to_anatomy.connect(inputs, 'inplane_file', strip, 'T1_files')
-    align_to_anatomy.connect(strip, 'brainmask', register, 'target_file')
-    align_to_anatomy.connect(inputs, 'anatomy_file', register, 'source_file')
+    align_to_anatomy.connect(strip, 'brainmask', register, 'source_file')
+    align_to_anatomy.connect(inputs, 'anatomy_file', register, 'target_file')
     align_to_anatomy.connect(register, 'out_reg_file', convert_xfm, 'in_file')
     align_to_anatomy.connect(convert_xfm, 'out_file',rename_xfm,'in_file')
     align_to_anatomy.connect(rename_xfm, 'out_file', outputs, 'xfm_file')
@@ -187,7 +187,7 @@ def create_preprocess_workflow(name,
         workflow.connect(get_session_dir,'session_dir',extract_inplane,'inputs.session_dir')
 
         if do_save_inplane:
-            workflow.connect(extract_inplane,'outputs.out_file',datasink,'inplane')
+            workflow.connect(extract_inplane,'outputs.out_file',datasink,'mri.@inplane')
 
             #align inplanes to anatomy
             if do_align_to_anatomy:
@@ -201,18 +201,18 @@ def create_preprocess_workflow(name,
 
                 if do_align_qa:
                     align_qa = pe.Node(interface=nmutil.AlignmentQA(), name='align_qa')
-                    workflow.connect(get_anatomy,'brain',align_qa,'source_file')
-                    workflow.connect(align_to_anatomy,'outputs.strip_file',align_qa,'target_file')
+                    workflow.connect(get_anatomy,'brain',align_qa,'target_file')
+                    workflow.connect(align_to_anatomy,'outputs.strip_file',align_qa,'source_file')
                     workflow.connect(align_to_anatomy,'outputs.xfm_file',align_qa,'reg_file')
 
                     if do_save_align_qa:
-                        workflow.connect(align_qa,'out_file',datasink,'qa.anatomy_to_inplane')
+                        workflow.connect(align_qa,'out_file',datasink,'qa.inplane_to_anatomy')
 
                 if do_save_strip:
-                    workflow.connect(align_to_anatomy,'outputs.strip_file',datasink,'inplane.@strip')
+                    workflow.connect(align_to_anatomy,'outputs.strip_file',datasink,'mri.@inplane.@strip')
 
                 if do_save_align:
-                    workflow.connect(align_to_anatomy,'outputs.xfm_file',datasink,'transforms.@anatomy_to_inplane')
+                    workflow.connect(align_to_anatomy,'outputs.xfm_file',datasink,'mri.transforms.@inplane_to_anatomy')
 
     if do_extract_functionals:
         ##for each functional
@@ -243,7 +243,7 @@ def create_preprocess_workflow(name,
             between_run_align = create_between_run_align_workflow()
             workflow.connect(join_functionals,'functionals',between_run_align,'inputs.in_files')
 
-            workflow.connect(between_run_align,'outputs.out_files',datasink,'functionals')
+            workflow.connect(between_run_align,'outputs.out_files',datasink,'mri.@functionals')
 
             #merge functionals
             if do_merge_functionals:
@@ -256,7 +256,7 @@ def create_preprocess_workflow(name,
                 workflow.connect(merge_functionals,'merged_file',rename_merged,'in_file')
 
             if do_save_merge:
-                workflow.connect(rename_merged,'out_file',datasink,'functionals.@merged')
+                workflow.connect(rename_merged,'out_file',datasink,'mri.@functionals.@merged')
 
     return workflow
 
