@@ -120,7 +120,7 @@ def create_within_run_align_workflow(name='within_run_align', slice_timing_corre
 #assumptions: align to first frame of first series
 def create_between_run_align_workflow(name='between_run_align', ref_vol='first'):
     
-    between_run_align = pe.Workflow(name='between_run_align')
+    between_run_align = pe.Workflow(name=name)
     
     inputs = pe.Node(interface=util.IdentityInterface(fields=['in_files']), name='inputs')
     
@@ -143,6 +143,55 @@ def create_between_run_align_workflow(name='between_run_align', ref_vol='first')
     
     return between_run_align
 
+def create_ml_workflow(name,
+                       work_dir,
+                       sessions_file,
+                       session_template,
+                       fs_dir):
+    #initialize workflow
+    workflow = pe.Workflow(name=name)
+    workflow.base_dir = work_dir
+
+    ##for each session
+    sessions_info = ColumnData(sessions_file, dtype=str)
+    sessions = pe.Node(interface=util.IdentityInterface(fields=['session_dir','subject_id']), name='sessions')
+    sessions.iterables = sessions_info.items()
+    sessions.synchronize = True
+
+    #get session directory
+    get_session_dir = pe.Node(interface=nio.SelectFiles(session_template), name='get_session_dir')
+    workflow.connect(sessions,'session_dir',get_session_dir,'session_dir')
+
+    #save outputs
+    datasink = pe.Node(nio.DataSink(), name='datasink')
+    datasink.inputs.parameterization = False
+    workflow.connect(get_session_dir,'session_dir',datasink,'base_directory')
+
+    functional_template = {'nifti_file':'mri/f.nii.gz',
+                           'attributes_file':'attributes.txt'}
+    get_files = pe.Node(nio.SelectFiles(functional_template), name='get_files')
+    workflow.connect(get_session_dir,'session_dir',get_files,'base_directory')
+    
+    ml = pe.Node(nmutil.PerformML(), name='ml')
+    workflow.connect(get_files,'nifti_file',ml,'nifti_file')
+    workflow.connect(get_files,'attributes_file',ml,'attributes_file')
+
+    workflow.connect(ml,'results_file',datasink,'ml.within_scan')
+
+    join_subjects = pe.Node(util.IdentityInterface(fields=['nifti_files','attributes_files']),
+                            name='join_subjects',
+                            joinsource='sessions',
+                            joinfield='subject_id')
+
+    across_ml = pe.Node(nmutil.PerformAcrossML(), name='across_ml')
+    workflow.connect(join_subjects,'nifti_files',across_ml,'nifti_files')
+    workflow.connect(join_subjects,'attributes_files',across_ml,'attributes_files')
+
+    workflow.connect(across_ml,'results_file',datasink,'ml.between_scan')
+
+    return workflow
+    
+
 def create_preprocess_workflow(name,
                                work_dir,
                                sessions_file,
@@ -161,6 +210,7 @@ def create_preprocess_workflow(name,
                                do_within_run_align = True,
                                do_between_run_align = True,
                                do_merge_functionals = True,
+                               do_within_subject_align = True,
                                do_save_merge = True):
     #initialize workflow
     workflow = pe.Workflow(name=name)
@@ -255,8 +305,57 @@ def create_preprocess_workflow(name,
                 workflow.connect(between_run_align,'outputs.out_files',merge_functionals,'in_files')
                 workflow.connect(merge_functionals,'merged_file',rename_merged,'in_file')
 
+    
             if do_save_merge:
                 workflow.connect(rename_merged,'out_file',datasink,'mri.@functionals.@merged')
 
     return workflow
 
+def create_within_subject_workflow(name,
+                                   work_dir,
+                                   sessions_file,
+                                   session_template,
+                                   scan_list,
+                                   fs_dir):
+    
+#initialize workflow
+workflow = pe.Workflow(name=name)
+workflow.base_dir = work_dir
+
+sessions_info = ColumnData(sessions_file, dtype=str)
+subject_ids = set(sessions_info['subject_id'])
+session_map = [(sid,[s for i,s in zip(*sessions_info.values()) if i == sid])
+               for sid in subject_ids]
+
+##for each subject
+subjects = pe.Node(interface=util.IdentityInterface(fields=['subject_id']), name='subjects')
+subjects.iterables = [('subject_id', subject_ids)]
+
+##for each session
+sessions = pe.Node(interface=util.IdentityInterface(fields=['subject_id','session_dir']), name='sessions')
+sessions.itersource = ('subjects','subject_id')
+sessions.iterables = [('session_dir', dict(session_map))]
+workflow.connect(subjects,'subject_id',sessions,'subject_id')
+
+#get session directory
+get_session_dir = pe.Node(interface=nio.SelectFiles(session_template), name='get_session_dir')
+workflow.connect(sessions,'session_dir',get_session_dir,'session_dir')
+
+#save outputs
+datasink = pe.Node(nio.DataSink(), name='datasink')
+datasink.inputs.parameterization = False
+workflow.connect(get_session_dir,'session_dir',datasink,'base_directory')
+
+template = {'functional':'mri/f.nii.gz'}
+get_files = pe.Node(nio.SelectFiles(template), name='get_files')
+workflow.connect(get_session_dir,'session_dir',get_files,'base_directory')
+
+join_sessions = pe.JoinNode(interface=util.IdentityInterface(fields=['functionals']),
+                            name='join_sessions',
+                            joinsource='sessions')
+workflow.connect(get_files,'functional',join_sessions,'functionals')
+
+within_subject_align = create_between_run_align_workflow(name='within_subject_align')
+workflow.connect(join_sessions,'functionals',within_subject_align,'inputs.in_files')
+
+return workflow

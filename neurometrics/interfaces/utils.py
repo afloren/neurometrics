@@ -1,7 +1,10 @@
-from nipype.interfaces.base import BaseInterface, BaseInterfaceInputSpec, traits, File, TraitedSpec, DynamicTraitedSpec, Undefined
+from nipype.interfaces.base import BaseInterface, BaseInterfaceInputSpec, traits, File, TraitedSpec, DynamicTraitedSpec, Undefined, InputMultiPath
 from nipype.utils.filemanip import split_filename
 
 import neurometrics.utility
+import neurometrics.ANOVA
+import pickle
+import gzip
 import os
 import stat
 import string
@@ -29,6 +32,52 @@ class LtaToXfm(BaseInterface):
         outputs["out_file"] = os.path.abspath(base + '.xfm')#FIXME: should check if inputs.out_file is defined
         return outputs
 
+class PerformMLInputSpec(BaseInterfaceInputSpec):
+    nifti_file = File(desc='nifti file for ML to be performed on', exists=True, mandatory=True)
+    attributes_file = File(desc='attributes.txt file containing target information', exists=True, mandatory=True)
+
+class PerformMLOutputSpec(TraitedSpec):
+    results_file = File(desc='pklz file containing results from ML', exists=True)
+    
+class PerformML(BaseInterface):
+    input_spec = PerformMLInputSpec
+    output_spec = PerformMLOutputSpec
+
+    def _run_interface(self, runtime):
+        results = neurometrics.ANOVA.do_session(self.inputs.attributes_file,
+                                                self.inputs.nifti_file)
+        with gzip.open(self._list_outputs()['results_file'],'wb') as f:
+            pickle.dump(f, results, pickle.HIGHEST_PROTOCOL)
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['results_file'] = os.path.abspath('results.pklz')#FIXME: should make this based on something
+        return outputs
+
+class PerformAcrossMLInputSpec(BaseInterfaceInputSpec):
+    nifti_files = InputMultiPath(File(desc='nifti files for ML to be performed on', exists=True, mandatory=True))
+    attributes_files = InputMultiPath(File(desc='attributes.txt files containing target information', exists=True, mandatory=True))
+
+class PerformAcrossMLOutputSpec(TraitedSpec):
+    results_file = File(desc='pklz file containing results from ML', exists=True)
+    
+class PerformAcrossML(BaseInterface):
+    input_spec = PerformAcrossMLInputSpec
+    output_spec = PerformAcrossMLOutputSpec
+
+    def _run_interface(self, runtime):
+        results = neurometrics.ANOVA.do_across_session(self.inputs.attributes_files,
+                                                       self.inputs.nifti_files)
+        with gzip.open(self._list_outputs()['results_file'],'wb') as f:
+            pickle.dump(f, results, pickle.HIGHEST_PROTOCOL)
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['results_file'] = os.path.abspath('results.pklz')#FIXME: should make this based on something
+        return outputs
+    
 class WriteFileInputSpec(DynamicTraitedSpec, BaseInterfaceInputSpec):
     out_file = File(desc='output file', hash_files=False)
 
