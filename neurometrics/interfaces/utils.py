@@ -32,9 +32,62 @@ class LtaToXfm(BaseInterface):
         outputs["out_file"] = os.path.abspath(base + '.xfm')#FIXME: should check if inputs.out_file is defined
         return outputs
 
+class NiftiToDatasetInputSpec(BaseInterfaceInputSpec):
+    nifti_file = File(desc='nifti file to convert to ML dataset format', exists=True, mandatory=True)
+    attributes_file = File(desc='attribute file containing information for ML', exists=True)
+    subject_id = traits.String(desc='unique subject identifier')
+    session_id = traits.String(desc='unique session identifier')
+
+class NiftiToDatasetOutputSpec(TraitedSpec):
+    ds_file = File(desc='output file in ML dataset format', exists=True)
+    
+class NiftiToDataset(BaseInterface):
+    input_spec = NiftiToDatasetInputSpec
+    output_spec = NiftiToDatasetOutputSpec
+
+    def _run_interface(self, runtime):
+        ds = neurometrics.ANOVA.nifti_to_dataset(self.inputs.nifti_file,
+                                                 self.inputs.attributes_file,
+                                                 self.inputs.subject_id,
+                                                 self.inputs.session_id)
+        ds.save(self._list_outputs()['ds_file'])
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['ds_file'] = os.path.abspath('dataset.hdf5')#FIXME: should generate name
+        return outputs
+
+class JoinDatasetsInputSpec(BaseInterfaceInputSpec):
+    input_datasets = InputMultiPath(File(desc='datasets to be joined', exists=True, mandatory=True))
+    join_hemispheres = traits.Bool(desc='whether we are joining hemispheres or not')
+
+class JoinDatasetsOutputSpec(TraitedSpec):
+    joined_dataset = File(desc='joined dataset', exists=True)
+    
+class JoinDatasets(BaseInterface):
+    input_spec = JoinDatasetsInputSpec
+    output_spec = JoinDatasetsOutputSpec
+
+    def _run_interface(self, runtime):
+        datasets = [neurometrics.ANOVA.load_dataset(d)
+                    for d in self.inputs.input_datasets]
+        if self.inputs.join_hemispheres:
+            assert(len(datasets) == 2)
+            ds = neurometrics.ANOVA.join_hemispheres(datasets[0],
+                                                     datasets[1])
+        else:
+            ds = neurometrics.ANOVA.join_datasets(datasets)
+        ds.save(self._list_outputs()['joined_dataset'])
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['joined_dataset'] = os.path.abspath('dataset.hdf5')#FIXME: should generate name
+        return outputs
+    
 class PerformMLInputSpec(BaseInterfaceInputSpec):
-    nifti_file = File(desc='nifti file for ML to be performed on', exists=True, mandatory=True)
-    attributes_file = File(desc='attributes.txt file containing target information', exists=True, mandatory=True)
+    ds_file = File(desc='dataset file for ML to be performed on', exists=True, mandatory=True)
 
 class PerformMLOutputSpec(TraitedSpec):
     results_file = File(desc='pklz file containing results from ML', exists=True)
@@ -44,10 +97,10 @@ class PerformML(BaseInterface):
     output_spec = PerformMLOutputSpec
 
     def _run_interface(self, runtime):
-        results = neurometrics.ANOVA.do_session(self.inputs.attributes_file,
-                                                self.inputs.nifti_file)
+        ds = neurometrics.ANOVA.load_dataset(self.inputs.ds_file)
+        results = neurometrics.ANOVA.do_session(ds)
         with gzip.open(self._list_outputs()['results_file'],'wb') as f:
-            pickle.dump(f, results, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(results, f, pickle.HIGHEST_PROTOCOL)
         return runtime
 
     def _list_outputs(self):
@@ -55,29 +108,41 @@ class PerformML(BaseInterface):
         outputs['results_file'] = os.path.abspath('results.pklz')#FIXME: should make this based on something
         return outputs
 
-class PerformAcrossMLInputSpec(BaseInterfaceInputSpec):
-    nifti_files = InputMultiPath(File(desc='nifti files for ML to be performed on', exists=True, mandatory=True))
-    attributes_files = InputMultiPath(File(desc='attributes.txt files containing target information', exists=True, mandatory=True))
-
-class PerformAcrossMLOutputSpec(TraitedSpec):
-    results_file = File(desc='pklz file containing results from ML', exists=True)
+class SummarizeResultsInputSpec(BaseInterfaceInputSpec):
+    ids = InputMultiPath(desc='unique identifier for each result', mandatory=True)
+    results_files = InputMultiPath(File(desc='results files to be summarized', exists=True, mandatory=True))
     
-class PerformAcrossML(BaseInterface):
-    input_spec = PerformAcrossMLInputSpec
-    output_spec = PerformAcrossMLOutputSpec
+class SummarizeResultsOutputSpec(TraitedSpec):
+    summary_file = File(desc='text file containing summary of ML results', exists=True)
+
+class SummarizeResults(BaseInterface):
+    input_spec = SummarizeResultsInputSpec
+    output_spec = SummarizeResultsOutputSpec
 
     def _run_interface(self, runtime):
-        results = neurometrics.ANOVA.do_across_session(self.inputs.attributes_files,
-                                                       self.inputs.nifti_files)
-        with gzip.open(self._list_outputs()['results_file'],'wb') as f:
-            pickle.dump(f, results, pickle.HIGHEST_PROTOCOL)
+        ids = self.inputs.ids
+        
+        results = []
+        for rfile in self.inputs.results_files:
+            with gzip.open(rfile) as f:
+                results.append(pickle.load(f))
+                
+        with open(self._list_outputs()['summary_file'],'w') as f:
+            for i,r in zip(ids,results):
+                f.write('ID: {}\n'.format(i))
+                for j,v in enumerate(r['scores']):
+                    f.write('fold: {}\n'.format(j))
+                    for k in v.keys():
+                        f.write('{}\n'.format(k))
+                        f.write('{}\n'.format(v[k]))
+                        
         return runtime
 
     def _list_outputs(self):
         outputs = self._outputs().get()
-        outputs['results_file'] = os.path.abspath('results.pklz')#FIXME: should make this based on something
+        outputs['summary_file'] = os.path.abspath('results.txt')
         return outputs
-    
+
 class WriteFileInputSpec(DynamicTraitedSpec, BaseInterfaceInputSpec):
     out_file = File(desc='output file', hash_files=False)
 
@@ -134,3 +199,4 @@ class AlignmentQA(WriteFile):
 
     def _gen_filename(self):
         return 'alignment-qa.sh'
+
