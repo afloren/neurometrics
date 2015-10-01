@@ -8,6 +8,7 @@ import gzip
 import os
 import stat
 import string
+import numpy as np
 
 class LtaToXfmInputSpec(BaseInterfaceInputSpec):
     in_file = File(desc='input lta file', exists=True, mandatory=True)
@@ -126,16 +127,30 @@ class SummarizeResults(BaseInterface):
         for rfile in self.inputs.results_files:
             with gzip.open(rfile) as f:
                 results.append(pickle.load(f))
+
+        keys = ['accuracy','recall','f1','block_vote','block_proba']
                 
         with open(self._list_outputs()['summary_file'],'w') as f:
             for i,r in zip(ids,results):
                 f.write('ID: {}\n'.format(i))
+                f.write('Average scores\n')
+                for k in keys:
+                    f.write('{}\n'.format(k))
+                    val = np.mean([v[k] for v in r['scores']])
+                    f.write('{}\n'.format(val))
+                f.write('Fold scores\n')
+                for j,v in enumerate(r['scores']):
+                    f.write('fold: {}\n'.format(j))
+                    for k in keys:
+                        f.write('{}\n'.format(k))
+                        f.write('{}\n'.format(v[k]))
+                f.write('Other scores\n')
                 for j,v in enumerate(r['scores']):
                     f.write('fold: {}\n'.format(j))
                     for k in v.keys():
-                        f.write('{}\n'.format(k))
-                        f.write('{}\n'.format(v[k]))
-                        
+                        if k not in keys:
+                            f.write('{}\n'.format(k))
+                            f.write('{}\n'.format(v[k]))
         return runtime
 
     def _list_outputs(self):

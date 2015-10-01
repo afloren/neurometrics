@@ -19,6 +19,9 @@ from sklearn.cross_validation import cross_val_score
 from sklearn.cross_validation import permutation_test_score
 from sklearn.metrics import classification_report
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import f1_score
 from sklearn.grid_search import GridSearchCV
 from neurometrics.neural_network import FeedForwardNeuralNetwork
 
@@ -49,6 +52,9 @@ def block_probability_score(y_true, y_pred, y_proba, block_size):
 def score(clf, X, y):
     return {'report':classification_report(y,clf.predict(X)),
             'accuracy':accuracy_score(y,clf.predict(X)),
+            'precision':precision_score(y,clf.predict(X),average='weighted'),
+            'recall':recall_score(y,clf.predict(X),average='weighted'),
+            'f1':f1_score(y,clf.predict(X),average='weighted'),
             'block_vote':block_vote_score(y,clf.predict(X),block_size),
             'block_proba':block_probability_score(y,clf.predict(X),clf.predict_proba(X),block_size),
             'y':y,
@@ -121,7 +127,7 @@ def do_session(ds,
     ds.sa['chunks'] = ['{}:{}'.format(sid,scan)
                        for sid, scan
                        in zip(ds.sa['session_id'],
-                              ds.sa['scan'])]
+                              ds.sa['run'])]
 
     ds.sa['targets'] = ds.sa['quantized_distance']
 
@@ -135,13 +141,14 @@ def do_session(ds,
 
     ds = ds[numpy.logical_not(numpy.logical_or(ds.sa.move, ds.sa.cue)), :]
 
-    fs = SelectKBest(k=3000)
-
-    fs.fit(ds.samples, ds.sa.search > 0)
+    if ds.nfeatures > 3000:
+        fs = SelectKBest(k=3000)
+        fs.fit(ds.samples, ds.sa.search > 0)
 
     ds = ds[ds.sa.search > 0, :]
 
-    ds = ds[:, fs.get_support()]
+    if ds.nfeatures > 3000:
+        ds = ds[:, fs.get_support()]
 
     logger.info('Configuring cross validation')
     cv = StratifiedKFold(ds.sa.targets, n_folds=6)
@@ -167,9 +174,8 @@ def do_session(ds,
         
     result = {}
     result['datetime'] = datetime.datetime.now()
-    result['attr_files'] = attr_files
-    result['nifti_files'] = nifti_files
-    result['fs'] = fs
+    if ds.nfeatures > 3000:
+        result['fs'] = fs
     result['mapper'] = ds.mapper
     result['clf'] = clf
     result['cv'] = cv
