@@ -36,6 +36,7 @@ class LtaToXfm(BaseInterface):
 class NiftiToDatasetInputSpec(BaseInterfaceInputSpec):
     nifti_file = File(desc='nifti file to convert to ML dataset format', exists=True, mandatory=True)
     attributes_file = File(desc='attribute file containing information for ML', exists=True)
+    annot_file = File(desc='annotation file containing parcelation information', exists=True)
     subject_id = traits.String(desc='unique subject identifier')
     session_id = traits.String(desc='unique session identifier')
 
@@ -49,6 +50,7 @@ class NiftiToDataset(BaseInterface):
     def _run_interface(self, runtime):
         ds = neurometrics.ANOVA.nifti_to_dataset(self.inputs.nifti_file,
                                                  self.inputs.attributes_file,
+                                                 self.inputs.annot_file,
                                                  self.inputs.subject_id,
                                                  self.inputs.session_id)
         ds.save(self._list_outputs()['ds_file'])
@@ -89,7 +91,11 @@ class JoinDatasets(BaseInterface):
     
 class PerformMLInputSpec(BaseInterfaceInputSpec):
     ds_file = File(desc='dataset file for ML to be performed on', exists=True, mandatory=True)
-
+    classifier = traits.Any()#TODO: make this a classifier object
+    scoring = traits.Any()#TODO: make this a scoring object
+    targets = traits.Any()#TODO: make this a string
+    training_curve = traits.Bool(desc='whether training curve analysis will be performed')
+    
 class PerformMLOutputSpec(TraitedSpec):
     results_file = File(desc='pklz file containing results from ML', exists=True)
     
@@ -99,7 +105,11 @@ class PerformML(BaseInterface):
 
     def _run_interface(self, runtime):
         ds = neurometrics.ANOVA.load_dataset(self.inputs.ds_file)
-        results = neurometrics.ANOVA.do_session(ds)
+        results = neurometrics.ANOVA.do_session(ds,
+                                                clf=self.inputs.classifier,
+                                                scoring=self.inputs.scoring,
+                                                targets=self.inputs.targets
+                                                training_curve=self.inputs.training_curve)
         with gzip.open(self._list_outputs()['results_file'],'wb') as f:
             pickle.dump(results, f, pickle.HIGHEST_PROTOCOL)
         return runtime
@@ -107,6 +117,55 @@ class PerformML(BaseInterface):
     def _list_outputs(self):
         outputs = self._outputs().get()
         outputs['results_file'] = os.path.abspath('results.pklz')#FIXME: should make this based on something
+        return outputs
+
+class PerformFAInputSpec(BaseInterfaceInputSpec):
+    ds_file = File(desc='dataset file for FA to be performed on', exists=True, mandatory=True)
+
+class PerformFAOutputSpec(TraitedSpec):
+    out_file = File(desc='pklz file containing dictionary of FA mappers', exists=True)
+
+class PerformFA(BaseInterface):
+    input_spec = PerformFAInputSpec
+    output_spec = PerformFAOutputSpec
+
+    def _run_interface(self, runtime):
+        ds = neurometrics.ANOVA.load_dataset(self.inputs.ds_file)
+        ha = neurometrics.ANOVA.do_falign(ds,
+                                          self.inputs.classifier,
+                                          self.inputs.scoring,
+                                          self.inputs.targets)
+        with gzip.open(self._list_outputs()['out_file'],'wb') as f:
+            pickle.dump(ha, f, pickle.HIGHEST_PROTOCOL)
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['out_file'] = os.path.abspath('ha.pklz')#FIXME: should make this based on something
+        return outputs
+
+class ApplyFAInputSpec(BaseInterfaceInputSpec):
+    ds_file = File(desc='dataset file to apply FA to', exists=True, mandatory=True)
+    ha_file = File(desc='pklz file containing dictionary of FA mappers', exists=True, mandatory=True)
+
+class ApplyFAOutputSpec(TraitedSpec):
+    out_file = File(desc='FA transformed dataset', exists=True)
+
+class ApplyFA(BaseInterface):
+    input_spec = ApplyFAInputSpec
+    output_spec = ApplyFAOutputSpec
+
+    def _run_interface(self, runtime):
+        ds = neurometrics.ANOVA.load_dataset(self.inputs.ds_file)
+        with gzip.open(self.inputs.ha_file,'rb') as f:
+            ha = pickle.load(f)
+        fads = neurometrics.ANOVA.apply_falign(ds,ha)
+        fads.save(self._list_outputs()['out_file'])
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        outputs['out_file'] = os.path.abspath('fa.hdf5')#FIXME: should make this based on something
         return outputs
 
 class SummarizeResultsInputSpec(BaseInterfaceInputSpec):

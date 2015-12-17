@@ -77,6 +77,9 @@ class MLP(BaseEstimator, ClassifierMixin):
     def predict(self, X):
         return self.estimator.predict(X)
 
+    def predict_proba(self, X):
+        return self.estimator.predict_proba(X)
+
 class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
     def __init__(self):
         self.tmp_dir = mkdtemp()
@@ -99,6 +102,14 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
                                  X = X.T,
                                  tmp_file = tmp_file)
         return (results['y_pred'].ravel() - 1) #dammit matlab...
+
+    def predict_proba(self, X):
+        tmp_file = path.join(self.tmp_dir,'net.mat')
+        results = matlab_command(("load(tmp_file);"
+                                  "y = net(X);"),
+                                 X = X.T,
+                                 tmp_file = tmp_file)
+        return results['y'].T
 
     def confidence(self, X):
         tmp_file = path.join(self.tmp_dir,'net.mat')

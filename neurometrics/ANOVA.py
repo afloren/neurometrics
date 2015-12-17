@@ -25,6 +25,9 @@ from sklearn.metrics import f1_score
 from sklearn.grid_search import GridSearchCV
 from neurometrics.neural_network import FeedForwardNeuralNetwork
 
+
+import nibabel.freesurfer.io
+
 logger = logging.getLogger(__name__)
 
 block_size = 18 #FIXME: figure out how to git rid of this
@@ -64,11 +67,14 @@ def score(clf, X, y):
 def train_score(clf, X, y, train, test, scoring):
     return scoring(clf.fit(X[train],y[train]),X[test],y[test])
 
+
+import sklearn.base
+
 def cross_val(clf, X, y, cv, scoring):
     #from IPython.parallel import Client
     #c = Client()
     #return c[:].map_sync(train_score, *zip(*[(clf, X, y, train, test, scoring) for train, test in cv]))
-    return [train_score(clf,X,y,train,test,scoring) for train,test in cv]
+    return [train_score(sklearn.base.clone(clf),X,y,train,test,scoring) for train,test in cv]
 
 def join_hemispheres(lhds, rhds):
     lhds.fa['hemi'] = ['lh']*lhds.nfeatures
@@ -98,7 +104,7 @@ def load_dataset(dataset_file):
     ds = AttrDataset.from_hdf5(dataset_file)
     return ds
 
-def nifti_to_dataset(nifti_file, attr_file=None, subject_id=None, session_id=None):
+def nifti_to_dataset(nifti_file, attr_file=None, annot_file=None, subject_id=None, session_id=None):
 
     logger.info('Loading fmri dataset: {}'.format(nifti_file))
     ds = fmri_dataset(samples = nifti_file)
@@ -106,9 +112,13 @@ def nifti_to_dataset(nifti_file, attr_file=None, subject_id=None, session_id=Non
     if attr_file is not None:
         logger.info('Loading attributes: {}'.format(attr_file))
         attr = ColumnData(attr_file)
-
         for k in attr.keys():
             ds.sa[k] = attr[k]
+
+    if annot_file is not None:
+        logger.info('Loading annotation: {}'.format(annot_file))
+        annot = nibabel.freesurfer.io.read_annot(annot_file)
+        ds.fa['annotation'] = [annot[2][i] for i in annot[0]]#FIXME: roi cannot be a fa
 
     if subject_id is not None:
         ds.sa['subject_id'] = [subject_id]*ds.nsamples
@@ -118,10 +128,78 @@ def nifti_to_dataset(nifti_file, attr_file=None, subject_id=None, session_id=Non
         
     return ds
 
+def do_falign(ds,
+              alpha = 0.):
+
+    ds.sa['chunks'] = ['{}:{}'.format(sid,scan)
+                       for sid, scan
+                       in zip(ds.sa.session_id,
+                              ds.sa.run)]
+
+    from mvpa2.mappers.detrend import PolyDetrendMapper
+
+    detrender = PolyDetrendMapper(polyord = 1, chunks_attr='chunks')
+
+    ds = ds.get_mapped(detrender)
+
+    subjects = ds.sa['subject_id'].unique
+    rois = ds.fa['annotation'].unique#FIXME: roi cannot be a fa
+    hemis = ds.fa['hemi'].unique
+
+    ds_lists = [[[ds[{'subject_id': [subject]},{'annotation': [roi], 'hemi': [hemi]}]
+                  for subject in subjects]
+                 for roi in rois]
+                for hemi in hemis]
+
+    from mvpa2.algorithms.hyperalignment import Hyperalignment
+    from mvpa2.mappers.base import IdentityMapper
+
+    def fa(s_list):
+        try:
+            return Hyperalignment(alpha=alpha)(s_list)
+        except:
+            logger.warning('Hyperalignment failed for {hemi} {roi}.'.format(hemi=s_list[0].fa.hemi[0],
+                                                                            roi=s_list[0].fa.annotation[0]))
+            logger.warning('Inserting identity mappers.')
+            return [StaticProjectionMapper(numpy.eye(s.fa.attr_length)) for s in s_list]
+
+    ha = dict(zip(hemis,[dict(zip(rois,[dict(zip(subjects,fa(s_list)))
+                                        for s_list in r_list]))
+                         for r_list in ds_lists]))
+
+    return ha
+
+def apply_falign(ds,
+                 ha):
+
+    subjects = ds.sa['subject_id'].unique
+    rois = ds.fa['annotation'].unique#FIXME: roi cannot be a fa
+    hemis = ds.fa['hemi'].unique
+
+    rds = ds.copy()
+
+    sds = []
+    for subject in subjects:
+        rds = []
+        for roi in rois:
+            hds = []
+            for hemi in hemis:
+                select = ({'subject_id': [subject]},{'annotation': [roi], 'hemi': [hemi]})
+                mds = ha[hemi][roi][subject].forward(ds[select])
+                mds.fa['annotation'] = ds[select].fa['annotation']
+                mds.fa['hemi'] = ds[select].fa['hemi']
+                hds.append(mds)
+            rds.append(hstack(hds))
+        sds.append(hstack(rds))
+    return vstack(sds)
+
+
 def do_session(ds,
                clf = SVC(kernel='linear', probability=True),
                scoring = score,
+               targets = 'quantized_distance',
                n_jobs = 1,
+               learning_curve = False,
                permutation_test = False):
 
     ds.sa['chunks'] = ['{}:{}'.format(sid,scan)
@@ -129,7 +207,7 @@ def do_session(ds,
                        in zip(ds.sa['session_id'],
                               ds.sa['run'])]
 
-    ds.sa['targets'] = ds.sa['quantized_distance']
+    ds.sa['targets'] = ds.sa[targets]
 
     #fixme: do wiener filter here
 
@@ -151,7 +229,7 @@ def do_session(ds,
         ds = ds[:, fs.get_support()]
 
     logger.info('Configuring cross validation')
-    cv = StratifiedKFold(ds.sa.targets, n_folds=6)
+    cv = StratifiedKFold(ds.sa.quantized_distance, n_folds=6)#FIXME: make this a function parameter
 
     logger.info('Beginning cross validation')
     scores = cross_val(clf,
@@ -159,6 +237,19 @@ def do_session(ds,
                        ds.targets,
                        cv,
                        scoring)
+
+    if learning_curve:
+        from sklearn.learning_curve import learning_curve
+        logger.info('Beginning learning curve analysis')
+        train_sizes_abs,
+        train_scores,
+        test_scores = learning_curve(clf,
+                                     ds.samples,
+                                     ds.targets,
+                                     n_jobs = n_jobs,
+                                     verbose = 50,
+                                     scoring = 'accuracy')
+        
 
     if permutation_test:
         logger.info('Beginning permutation test')
@@ -177,10 +268,17 @@ def do_session(ds,
     if ds.nfeatures > 3000:
         result['fs'] = fs
     result['mapper'] = ds.mapper
-    result['clf'] = clf
-    result['cv'] = cv
-    result['scoring'] = scoring
+    #result['clf'] = clf
+    #result['cv'] = cv
+    #result['scoring'] = scoring
     result['scores'] = scores
+    if learning_curve:
+        result['learning_curve'] = (train_sizes_abs,
+                                    train_scores,
+                                    test_scores)
+    else:
+        result['learning_curve'] = None
+        
     if permutation_test:
         result['pvalue'] = pvalue;
     else:
