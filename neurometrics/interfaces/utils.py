@@ -105,11 +105,20 @@ class PerformML(BaseInterface):
 
     def _run_interface(self, runtime):
         ds = neurometrics.ANOVA.load_dataset(self.inputs.ds_file)
+        
+        kwargs = {}
+        if self.inputs.classifier:
+            kwargs['clf'] = self.inputs.classifier
+        if self.inputs.scoring:
+            kwargs['scoring'] = self.inputs.scoring
+        if self.inputs.targets:
+            kwargs['targets'] = self.inputs.targets
+        if self.inputs.learning_curve:
+            kwargs['learning_curve'] = self.inputs.learning_curve
+                
         results = neurometrics.ANOVA.do_session(ds,
-                                                clf=self.inputs.classifier,
-                                                scoring=self.inputs.scoring,
-                                                targets=self.inputs.targets,
-                                                learning_curve=self.inputs.learning_curve)
+                                                **kwargs)
+
         with gzip.open(self._list_outputs()['results_file'],'wb') as f:
             pickle.dump(results, f, pickle.HIGHEST_PROTOCOL)
         return runtime

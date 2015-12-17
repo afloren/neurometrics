@@ -241,14 +241,13 @@ def do_session(ds,
     if learning_curve:
         from sklearn.learning_curve import learning_curve
         logger.info('Beginning learning curve analysis')
-        train_sizes_abs,
-        train_scores,
-        test_scores = learning_curve(clf,
-                                     ds.samples,
-                                     ds.targets,
-                                     n_jobs = n_jobs,
-                                     verbose = 50,
-                                     scoring = 'accuracy')
+
+        train_sizes_abs, train_scores, test_scores = learning_curve(clf,
+                                                                    ds.samples,
+                                                                    ds.targets,
+                                                                    n_jobs = n_jobs,
+                                                                    verbose = 50,
+                                                                    scoring = 'accuracy')
         
 
     if permutation_test:
