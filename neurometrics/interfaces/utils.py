@@ -91,10 +91,10 @@ class JoinDatasets(BaseInterface):
     
 class PerformMLInputSpec(BaseInterfaceInputSpec):
     ds_file = File(desc='dataset file for ML to be performed on', exists=True, mandatory=True)
-    classifier = traits.Any()#TODO: make this a classifier object
-    scoring = traits.Any()#TODO: make this a scoring object
-    targets = traits.Any()#TODO: make this a string
-    training_curve = traits.Bool(desc='whether training curve analysis will be performed')
+    classifier = traits.Any(None)#TODO: make this a classifier object
+    scoring = traits.Any(None)#TODO: make this a scoring object
+    targets = traits.Any(None)#TODO: make this a string
+    learning_curve = traits.Bool(False, desc='whether training curve analysis will be performed')
     
 class PerformMLOutputSpec(TraitedSpec):
     results_file = File(desc='pklz file containing results from ML', exists=True)
@@ -108,8 +108,8 @@ class PerformML(BaseInterface):
         results = neurometrics.ANOVA.do_session(ds,
                                                 clf=self.inputs.classifier,
                                                 scoring=self.inputs.scoring,
-                                                targets=self.inputs.targets
-                                                training_curve=self.inputs.training_curve)
+                                                targets=self.inputs.targets,
+                                                learning_curve=self.inputs.learning_curve)
         with gzip.open(self._list_outputs()['results_file'],'wb') as f:
             pickle.dump(results, f, pickle.HIGHEST_PROTOCOL)
         return runtime
