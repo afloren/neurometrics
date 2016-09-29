@@ -10,6 +10,32 @@ import stat
 import string
 import numpy as np
 
+import nilearn
+import nilearn.image
+
+class ExtractVolumeInputSpec(BaseInterfaceInputSpec):
+    in_file = File(desc='input volume', exists=True, mandatory=True)
+    index = traits.Int(desc='index of volume to extract', mandatory=True)
+
+class ExtractVolumeOutputSpec(TraitedSpec):
+    out_file = File(desc='extracted volume', exists=True)
+
+class ExtractVolume(BaseInterface):
+    input_spec = ExtractVolumeInputSpec
+    output_spec = ExtractVolumeOutputSpec
+
+    def _run_interface(self, runtime):
+        nim = nilearn.image.index_img(self.inputs.in_file, self.inputs.index)
+        nim.to_filename(self._list_outputs()['out_file'])
+        return runtime
+
+    def _list_outputs(self):
+        outputs = self._outputs().get()
+        fname = self.inputs.in_file
+        base = os.path.splitext(os.path.basename(fname))[0]
+        outputs['out_file'] = os.path.abspath(base + '_ref.nii.gz')
+        return outputs
+
 class LtaToXfmInputSpec(BaseInterfaceInputSpec):
     in_file = File(desc='input lta file', exists=True, mandatory=True)
     out_file = File(desc='output xfm file', hash_files=False, name_source=['in_file'], name_template='%s.xfm')#FIXME: redundant with _list_outputs
@@ -39,6 +65,7 @@ class NiftiToDatasetInputSpec(BaseInterfaceInputSpec):
     annot_file = File(desc='annotation file containing parcelation information', exists=True)
     subject_id = traits.String(desc='unique subject identifier')
     session_id = traits.String(desc='unique session identifier')
+    ds_file = traits.String('dataset.hdf5', desc='name of ds file', usedefault=True) 
 
 class NiftiToDatasetOutputSpec(TraitedSpec):
     ds_file = File(desc='output file in ML dataset format', exists=True)
@@ -50,7 +77,7 @@ class NiftiToDataset(BaseInterface):
     def _run_interface(self, runtime):
         ds = neurometrics.ANOVA.nifti_to_dataset(self.inputs.nifti_file,
                                                  self.inputs.attributes_file,
-                                                 self.inputs.annot_file,
+                                                 self.inputs.annot_file if self.inputs.annot_file is not Undefined else None,
                                                  self.inputs.subject_id,
                                                  self.inputs.session_id)
         ds.save(self._list_outputs()['ds_file'])
@@ -58,12 +85,13 @@ class NiftiToDataset(BaseInterface):
 
     def _list_outputs(self):
         outputs = self._outputs().get()
-        outputs['ds_file'] = os.path.abspath('dataset.hdf5')#FIXME: should generate name
+        outputs['ds_file'] = os.path.abspath(self.inputs.ds_file)
         return outputs
 
 class JoinDatasetsInputSpec(BaseInterfaceInputSpec):
     input_datasets = InputMultiPath(File(desc='datasets to be joined', exists=True, mandatory=True))
     join_hemispheres = traits.Bool(desc='whether we are joining hemispheres or not')
+    joined_dataset = traits.String('dataset.hdf5', desc='name of joined dataset file') 
 
 class JoinDatasetsOutputSpec(TraitedSpec):
     joined_dataset = File(desc='joined dataset', exists=True)
@@ -86,7 +114,7 @@ class JoinDatasets(BaseInterface):
 
     def _list_outputs(self):
         outputs = self._outputs().get()
-        outputs['joined_dataset'] = os.path.abspath('dataset.hdf5')#FIXME: should generate name
+        outputs['joined_dataset'] = os.path.abspath(self.inputs.joined_dataset)
         return outputs
     
 class PerformMLInputSpec(BaseInterfaceInputSpec):
@@ -196,29 +224,48 @@ class SummarizeResults(BaseInterface):
             with gzip.open(rfile) as f:
                 results.append(pickle.load(f))
 
-        keys = ['accuracy','recall','f1','block_vote','block_proba']
+        #keys = ['accuracy','recall','f1','block_vote','block_proba']
+        
+        if all(isinstance(v,dict) for r in results for v in r['scores']):
+            keys = set.intersection(*[set(d.keys()) for r in results for d in r['scores']])
+        else:
+            keys = None
                 
         with open(self._list_outputs()['summary_file'],'w') as f:
             for i,r in zip(ids,results):
                 f.write('ID: {}\n'.format(i))
                 f.write('Average scores\n')
-                for k in keys:
-                    f.write('{}\n'.format(k))
-                    val = np.mean([v[k] for v in r['scores']])
-                    f.write('{}\n'.format(val))
+                if keys:
+                    for k in keys:
+                        f.write('{}\n'.format(k))
+                        try:
+                            val = np.mean([v[k] for v in r['scores']])
+                            f.write('{}\n'.format(val))
+                        except Exception as e:
+                            f.write('{}\n'.format(e))
+                else:
+                    try:
+                        val = np.mean(r['scores'])
+                        f.write('{}\n'.format(val))
+                    except Exception as e:
+                        f.write('{}\n'.format(e))
                 f.write('Fold scores\n')
                 for j,v in enumerate(r['scores']):
                     f.write('fold: {}\n'.format(j))
-                    for k in keys:
-                        f.write('{}\n'.format(k))
-                        f.write('{}\n'.format(v[k]))
-                f.write('Other scores\n')
-                for j,v in enumerate(r['scores']):
-                    f.write('fold: {}\n'.format(j))
-                    for k in v.keys():
-                        if k not in keys:
+                    if keys:
+                        for k in keys:
                             f.write('{}\n'.format(k))
                             f.write('{}\n'.format(v[k]))
+                    else:
+                        f.write('{}\n'.format(v))
+                if keys:
+                    f.write('Other scores\n')
+                    for j,v in enumerate(r['scores']):
+                        f.write('fold: {}\n'.format(j))
+                        for k in v.keys():
+                            if k not in keys:
+                                f.write('{}\n'.format(k))
+                                f.write('{}\n'.format(v[k]))
         return runtime
 
     def _list_outputs(self):

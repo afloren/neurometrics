@@ -4,6 +4,7 @@ import pickle
 import datetime
 import h5py
 import operator
+import math
 from os import path
 from mvpa2.misc.io import ColumnData
 from mvpa2.datasets import dataset_wizard
@@ -59,10 +60,10 @@ def score(clf, X, y):
             'recall':recall_score(y,clf.predict(X),average='weighted'),
             'f1':f1_score(y,clf.predict(X),average='weighted'),
             'block_vote':block_vote_score(y,clf.predict(X),block_size),
-            'block_proba':block_probability_score(y,clf.predict(X),clf.predict_proba(X),block_size),
+            'block_proba':block_probability_score(y,clf.predict(X),clf.predict_proba(X),block_size) if clf.probability else None,
             'y':y,
             'predict':clf.predict(X),
-            'predict_proba':clf.predict_proba(X)}
+            'predict_proba':clf.predict_proba(X) if clf.probability else None}
 
 def train_score(clf, X, y, train, test, scoring):
     return scoring(clf.fit(X[train],y[train]),X[test],y[test])
@@ -112,8 +113,12 @@ def nifti_to_dataset(nifti_file, attr_file=None, annot_file=None, subject_id=Non
     if attr_file is not None:
         logger.info('Loading attributes: {}'.format(attr_file))
         attr = ColumnData(attr_file)
+        valid = min(ds.nsamples, attr.nrows)
+        valid = int(valid/180)*180 #FIXME: ...
+        print valid
+        ds = ds[:valid,:]
         for k in attr.keys():
-            ds.sa[k] = attr[k]
+            ds.sa[k] = attr[k][:valid]
 
     if annot_file is not None:
         logger.info('Loading annotation: {}'.format(annot_file))

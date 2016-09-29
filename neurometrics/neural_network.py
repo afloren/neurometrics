@@ -125,7 +125,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
                                   "Savg = ffnnSensitivityAnalysis(net,inputs);"),
                                  inputs = X.T,
                                  tmp_file = tmp_file)
-        return results['Savg'].max(axis=0)
+        return results['Savg']
 
     def __del__(self):
         rmtree(self.tmp_dir)

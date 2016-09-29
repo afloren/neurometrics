@@ -10,13 +10,16 @@ import neurometrics.interfaces.utils as nmutil
 
 from mvpa2.misc.io import ColumnData
 
+def ref_vol_to_inplane_id(ref_vol):
+    return '1' if int(ref_vol) == -1 else ''
+
 def create_extract_inplane_workflow(name='extract_inplane',
-                                    templates={'inplane':'Raw/Anatomy/Inplane/'},
+                                    templates={'inplane':'Raw/Anatomy/Inplane{id}/'},
                                     format_string='inplane'):
 
     extract_inplane = pe.Workflow(name=name)
 
-    inputs = pe.Node(interface=util.IdentityInterface(fields=['session_dir']), name='inputs')
+    inputs = pe.Node(interface=util.IdentityInterface(fields=['session_dir','ref_vol']), name='inputs')
     get_inplane = pe.Node(interface=nio.SelectFiles(templates), name='get_inplane')
     inplane_to_nii = pe.Node(interface=ds.DcmStack(), name='inplane_to_nii')
     inplane_to_nii.inputs.embed_meta = True
@@ -25,6 +28,7 @@ def create_extract_inplane_workflow(name='extract_inplane',
     outputs = pe.Node(interface=util.IdentityInterface(fields=['out_file']), name='outputs')
     
     extract_inplane.connect(inputs,'session_dir',get_inplane,'base_directory')
+    extract_inplane.connect(inputs,('ref_vol', ref_vol_to_inplane_id),get_inplane,'id')
     extract_inplane.connect(get_inplane,'inplane',inplane_to_nii,'dicom_files')
     extract_inplane.connect(inplane_to_nii,'out_file',rename_inplane,'in_file')
     extract_inplane.connect(rename_inplane,'out_file',outputs,'out_file')
@@ -66,7 +70,7 @@ def create_align_to_anatomy_workflow(name='align_to_anatomy',
 
     register = pe.Node(interface=fs.RobustRegister(), name='register')
     register.inputs.auto_sens = True
-    register.inputs.init_orient = True
+    #register.inputs.init_orient = True #FIXME: disabled due to bug in binary
     convert_xfm = pe.Node(interface=nmutil.LtaToXfm(), name='convert_xfm')
     rename_xfm = pe.Node(interface=util.Rename(format_string), name='rename_xfm')
     rename_xfm.inputs.keep_ext = True
@@ -95,7 +99,7 @@ def create_within_run_align_workflow(name='within_run_align', slice_timing_corre
         get_meta.inputs.meta_keys = {'RepetitionTime':'tr',
                                      'CsaImage.MosaicRefAcqTimes':'slice_times'}
 
-        select_slice_times = pe.Node(interface=util.Select(), name='select_slice_times')
+        select_slice_times = pe.Node(interface=util.Select(), name='select_slice_times')#FIXME: sometimes required depending on dicom
         select_slice_times.inputs.index = [0]
 
     space_time_align = pe.Node(interface=nipy.SpaceTimeRealigner(), name='space_time_align')
@@ -110,35 +114,46 @@ def create_within_run_align_workflow(name='within_run_align', slice_timing_corre
     if slice_timing_correction:
         within_run_align.connect(inputs, 'in_file', get_meta, 'in_file')
         within_run_align.connect(get_meta, 'tr', space_time_align, 'tr')
-        within_run_align.connect(get_meta, 'slice_times', select_slice_times, 'inlist')
+        within_run_align.connect(get_meta, 'slice_times', select_slice_times, 'inlist')#see above
         within_run_align.connect(select_slice_times, 'out', space_time_align, 'slice_times')
+        #within_run_align.connect(get_meta, 'slice_times', space_time_align, 'slice_times')
     
     within_run_align.connect(space_time_align, 'out_file', outputs, 'out_file')
     
     return within_run_align
 
+def to_list(val):
+    return [int(val)]
+
+def to_int(val):
+    return int(val)
+
 #assumptions: align to first frame of first series
-def create_between_run_align_workflow(name='between_run_align', ref_vol='first'):
+def create_between_run_align_workflow(name='between_run_align'):
     
     between_run_align = pe.Workflow(name=name)
     
-    inputs = pe.Node(interface=util.IdentityInterface(fields=['in_files']), name='inputs')
+    inputs = pe.Node(interface=util.IdentityInterface(fields=['in_files', 'ref_vol']), name='inputs')
     
     select_ref_vol = pe.Node(interface=util.Select(), name='select_ref_vol')
-    select_ref_vol.inputs.index = [0]
+    #select_ref_vol.inputs.index = [ref_vol]
+
+    extract_ref_vol = pe.Node(interface=nmutil.ExtractVolume(), name='extract_ref_vol')
     
-    extract_ref_vol = pe.Node(interface=fsl.ExtractROI(), name='extract_ref_vol')
-    extract_ref_vol.inputs.t_min = 0
-    extract_ref_vol.inputs.t_size = 1
+    #extract_ref_vol = pe.Node(interface=fsl.ExtractROI(), name='extract_ref_vol')
+    #extract_ref_vol.inputs.t_min = 0
+    #extract_ref_vol.inputs.t_size = 1
     
     motion_correction = pe.MapNode(interface=fsl.MCFLIRT(), name='motion_correction', iterfield=['in_file'])
     
     outputs = pe.Node(interface=util.IdentityInterface(fields=['out_files']), name='outputs')
     
     between_run_align.connect(inputs, 'in_files', select_ref_vol, 'inlist')
+    between_run_align.connect(inputs, ('ref_vol', to_list), select_ref_vol, 'index')
     between_run_align.connect(select_ref_vol, 'out', extract_ref_vol, 'in_file')
+    between_run_align.connect(inputs, ('ref_vol', to_int), extract_ref_vol, 'index')
     between_run_align.connect(inputs, 'in_files', motion_correction, 'in_file')
-    between_run_align.connect(extract_ref_vol, 'roi_file', motion_correction, 'ref_file')
+    between_run_align.connect(extract_ref_vol, 'out_file', motion_correction, 'ref_file')
     between_run_align.connect(motion_correction, 'out_file', outputs, 'out_files')
     
     return between_run_align
@@ -193,6 +208,7 @@ def create_preprocess_workflow(name,
                                do_extract_functionals = True,
                                do_save_functionals = True,
                                do_within_run_align = True,
+                               do_slice_timing_correction = True,
                                do_between_run_align = True,
                                do_merge_functionals = True,
                                do_within_subject_align = True,
@@ -203,7 +219,7 @@ def create_preprocess_workflow(name,
 
     ##for each session
     sessions_info = ColumnData(sessions_file, dtype=str)
-    sessions = pe.Node(interface=util.IdentityInterface(fields=['session_dir','subject_id']), name='sessions')
+    sessions = pe.Node(interface=util.IdentityInterface(fields=['session_dir','subject_id','ref_vol']), name='sessions')
     sessions.iterables = sessions_info.items()
     sessions.synchronize = True
 
@@ -220,6 +236,7 @@ def create_preprocess_workflow(name,
     if do_extract_inplane:
         extract_inplane = create_extract_inplane_workflow()
         workflow.connect(get_session_dir,'session_dir',extract_inplane,'inputs.session_dir')
+        workflow.connect(sessions,'ref_vol',extract_inplane,'inputs.ref_vol')
 
         if do_save_inplane:
             workflow.connect(extract_inplane,'outputs.out_file',datasink,'mri.@inplane')
@@ -262,7 +279,7 @@ def create_preprocess_workflow(name,
 
         #simultaneous slicing timing and motion correction
         if do_within_run_align:
-            within_run_align = create_within_run_align_workflow()
+            within_run_align = create_within_run_align_workflow(slice_timing_correction = do_slice_timing_correction)
             workflow.connect(last_node,'outputs.out_file',within_run_align,'inputs.in_file')
             last_node = within_run_align
 
@@ -277,6 +294,7 @@ def create_preprocess_workflow(name,
         if do_between_run_align:
             between_run_align = create_between_run_align_workflow()
             workflow.connect(join_functionals,'functionals',between_run_align,'inputs.in_files')
+            workflow.connect(sessions,'ref_vol',between_run_align,'inputs.ref_vol')
 
             workflow.connect(between_run_align,'outputs.out_files',datasink,'mri.@functionals')
 
@@ -295,6 +313,208 @@ def create_preprocess_workflow(name,
                 workflow.connect(rename_merged,'out_file',datasink,'mri.@functionals.@merged')
 
     return workflow
+
+def create_ml_preprocess_workflow(name,
+                                  work_dir,
+                                  sessions_file,
+                                  session_template,
+                                  fs_dir,
+                                  fwhm=[2],
+                                  ico_order=[4],
+                                  do_save_vol_ds = False,
+                                  do_save_smooth_vol_ds = False,
+                                  do_save_surface_smooth_vol_ds = False,
+                                  do_save_surface_ds = False,
+                                  do_save_smooth_surface_ds = False,
+                                  do_save_sphere_nifti = False,
+                                  do_save_sphere_ds = True,
+                                  do_save_combined_ds = False):
+
+    #initialize workflow                                                                                   
+    workflow = pe.Workflow(name=name)
+    workflow.base_dir = work_dir
+
+    sessions_info = ColumnData(sessions_file, dtype=str)
+    subject_ids = set(sessions_info['subject_id'])
+    session_map = [(sid,[s for i,s,r in zip(*sessions_info.values()) if i == sid])
+                   for sid in subject_ids]
+
+    ##for each subject                                                                                         
+    subjects = pe.Node(interface=util.IdentityInterface(fields=['subject_id']), name='subjects')
+    subjects.iterables = [('subject_id', subject_ids)]
+
+    ##for each session                                                                         
+    sessions = pe.Node(interface=util.IdentityInterface(fields=['subject_id','session_dir']), name='sessions')
+    sessions.itersource = ('subjects','subject_id')
+    sessions.iterables = [('session_dir', dict(session_map))]
+    workflow.connect(subjects,'subject_id',sessions,'subject_id')
+
+    #get session directory                                                                                                        
+    get_session_dir = pe.Node(interface=nio.SelectFiles(session_template), name='get_session_dir')
+    workflow.connect(sessions,'session_dir',get_session_dir,'session_dir')
+
+    #save outputs
+    datasink = pe.Node(nio.DataSink(), name='datasink')
+    datasink.inputs.parameterization = False
+    workflow.connect(get_session_dir,'session_dir',datasink,'base_directory')
+
+    template = {'nifti_file':'mri/f.nii.gz',
+                'attributes_file':'attributes.txt',
+                'reg_file':'mri/transforms/functional_to_anatomy.dat'}
+    get_files = pe.Node(nio.SelectFiles(template), name='get_files')
+    workflow.connect(get_session_dir,'session_dir',get_files,'base_directory')
+
+    vol_to_ds = pe.Node(nmutil.NiftiToDataset(), name='vol_to_ds')
+    vol_to_ds.inputs.ds_file = 'vol.hdf5'
+
+    workflow.connect(get_files,'nifti_file',vol_to_ds,'nifti_file')
+    workflow.connect(get_files,'attributes_file',vol_to_ds,'attributes_file')
+    workflow.connect(subjects,'subject_id',vol_to_ds,'subject_id')
+    workflow.connect(sessions,'session_dir',vol_to_ds,'session_id')
+
+    if do_save_vol_ds:
+        workflow.connect(vol_to_ds,'ds_file',datasink,'ml.@vol')
+
+    fwhm = pe.Node(util.IdentityInterface(fields=['fwhm']), name='fwhm')
+    fwhm.iterables = [('fwhm',fwhm)]
+
+    if do_save_smooth_vol_ds:
+        smooth_vol = pe.Node(interface=fs.MRIConvert(), name='smooth_vol')
+        workflow.connect(get_files,'nifti_file',smooth_vol,'in_file')
+        workflow.connect(fwhm,'fwhm',smooth_vol,'fwhm')
+    
+        smooth_vol_to_ds = pe.Node(nmutil.NiftiToDataset(), name='smooth_vol_to_ds')
+        smooth_vol_to_ds.inputs.ds_file = 'smooth_vol.hdf5'
+    
+        workflow.connect(smooth_vol,'out_file',smooth_vol_to_ds,'nifti_file')
+        workflow.connect(get_files,'attributes_file',smooth_vol_to_ds,'attributes_file')
+        workflow.connect(subjects,'subject_id',smooth_vol_to_ds,'subject_id')
+        workflow.connect(sessions,'session_dir',smooth_vol_to_ds,'session_id')
+    
+        workflow.connect(smooth_vol_to_ds,'ds_file',datasink,'ml.@smooth_vol')
+
+    if do_save_surface_smooth_vol_ds:
+        surface_smooth_vol = pe.Node(interface=fs.Smooth(), name='surface_smooth_vol')
+        workflow.connect(get_files,'reg_file',surface_smooth_vol,'reg_file')
+        workflow.connect(get_files,'nifti_file',surface_smooth_vol,'in_file')
+        workflow.connect(fwhm,'fwhm',surface_smooth_vol,'surface_fwhm')
+    
+        surface_smooth_vol_to_ds = pe.Node(nmutil.NiftiToDataset(), name='surface_smooth_vol_to_ds')
+        surface_smooth_vol_to_ds.inputs.ds_file = 'surface_smooth_vol.hdf5'
+    
+        workflow.connect(surface_smooth_vol,'out_file',surface_smooth_vol_to_ds,'nifti_file')
+        workflow.connect(get_files,'attributes_file',surface_smooth_vol_to_ds,'attributes_file')
+        workflow.connect(subjects,'subject_id',surface_smooth_vol_to_ds,'subject_id')
+        workflow.connect(sessions,'session_dir',surface_smooth_vol_to_ds,'session_id')
+    
+        workflow.connect(surface_smooth_vol_to_ds,'ds_file',datasink,'ml.@surface_smooth_vol')
+
+    hemi = pe.Node(util.IdentityInterface(fields=['hemi']), name='hemi')
+    hemi.iterables = [('hemi',['lh','rh'])]
+
+    to_surface = pe.Node(fs.SampleToSurface(), name='to_surface')
+    to_surface.inputs.sampling_method = 'average'
+    to_surface.inputs.sampling_range = (0., 1., 0.1)
+    to_surface.inputs.sampling_units = 'frac'
+    workflow.connect(hemi,'hemi',to_surface,'hemi')
+    workflow.connect(get_files,'nifti_file',to_surface,'source_file')
+    workflow.connect(get_files,'reg_file',to_surface,'reg_file')
+
+    if do_save_surface_ds:    
+        surface_to_ds = pe.Node(nmutil.NiftiToDataset(), name='surface_to_ds')
+        workflow.connect(to_surface,'out_file',surface_to_ds,'nifti_file')
+        workflow.connect(get_files,'attributes_file',surface_to_ds,'attributes_file')
+        workflow.connect(subjects,'subject_id',surface_to_ds,'subject_id')
+        workflow.connect(sessions,'session_dir',surface_to_ds,'session_id')
+
+        join_surfaces = pe.JoinNode(nmutil.JoinDatasets(), 
+                                    name='join_surfaces',
+                                    joinsource='hemi',
+                                    joinfield='input_datasets')
+        join_surfaces.inputs.joined_dataset = 'surface.hdf5'
+        join_surfaces.inputs.join_hemispheres = True
+        workflow.connect(surface_to_ds,'ds_file',join_surfaces,'input_datasets')
+    
+        workflow.connect(join_surfaces,'joined_dataset',datasink,'ml.@surface')
+
+    smooth_surface = pe.Node(fs.SurfaceSmooth(), name='smooth_surface')
+    workflow.connect(to_surface,'out_file',smooth_surface,'in_file')
+    workflow.connect(sessions,'subject_id',smooth_surface,'subject_id')
+    workflow.connect(hemi,'hemi',smooth_surface,'hemi')
+    workflow.connect(fwhm,'fwhm',smooth_surface,'fwhm')
+
+    if do_save_smooth_surface_ds:        
+        smooth_surface_to_ds = pe.Node(nmutil.NiftiToDataset(), name='smooth_surface_to_ds')
+        workflow.connect(smooth_surface,'out_file',smooth_surface_to_ds,'nifti_file')
+        workflow.connect(get_files,'attributes_file',smooth_surface_to_ds,'attributes_file')
+        workflow.connect(subjects,'subject_id',smooth_surface_to_ds,'subject_id')
+        workflow.connect(sessions,'session_dir',smooth_surface_to_ds,'session_id')
+
+        join_smooth_surfaces = pe.JoinNode(nmutil.JoinDatasets(), 
+                                           name='join_smooth_surfaces',
+                                           joinsource='hemi',
+                                           joinfield='input_datasets')
+        join_smooth_surfaces.inputs.joined_dataset = 'smooth_surface.hdf5'
+        join_smooth_surfaces.inputs.join_hemispheres = True
+        workflow.connect(smooth_surface_to_ds,'ds_file',join_smooth_surfaces,'input_datasets')
+    
+        workflow.connect(join_smooth_surfaces,'joined_dataset',datasink,'ml.@smooth_surface')
+    
+
+    ico_order = pe.Node(util.IdentityInterface(fields=['ico_order']), name='ico_order')
+    ico_order.iterables = [('ico_order',ico_order)]
+
+    to_sphere = pe.Node(fs.SurfaceTransform(), name='to_sphere')
+    to_sphere.inputs.target_subject = 'ico'
+    workflow.connect(hemi,'hemi',to_sphere,'hemi')
+    workflow.connect(smooth_surface,'out_file',to_sphere,'source_file')
+    workflow.connect(subjects,'subject_id',to_sphere,'source_subject')
+    workflow.connect(ico_order,'ico_order',to_sphere,'target_ico_order')
+
+    if do_save_sphere_nifti:
+        workflow.connect(to_sphere,'out_file',datasink,'surf.@sphere')
+
+    template = {'annot_file':'{subject_id}/label/{hemi}.aparc.a2009s.annot'}
+    get_annot_file = pe.Node(nio.SelectFiles(template), name='get_annot_file')
+    get_annot_file.inputs.base_directory = fs_dir
+    get_annot_file.inputs.subject_id = 'fsaverage'
+    workflow.connect(hemi,'hemi',get_annot_file,'hemi')
+
+    transform_annot = pe.Node(fs.SurfaceTransform(), name='transform_annot')
+    transform_annot.inputs.source_subject = 'fsaverage'
+    transform_annot.inputs.target_subject = 'ico'
+    workflow.connect(hemi,'hemi',transform_annot,'hemi')
+    workflow.connect(get_annot_file,'annot_file',transform_annot,'source_annot_file')
+    workflow.connect(ico_order,'ico_order',transform_annot,'target_ico_order')
+    
+    sphere_to_ds = pe.Node(nmutil.NiftiToDataset(), name='sphere_to_ds')
+    workflow.connect(to_sphere,'out_file',sphere_to_ds,'nifti_file')
+    workflow.connect(get_files,'attributes_file',sphere_to_ds,'attributes_file')
+    workflow.connect(transform_annot,'out_file',sphere_to_ds,'annot_file')
+    workflow.connect(subjects,'subject_id',sphere_to_ds,'subject_id')
+    workflow.connect(sessions,'session_dir',sphere_to_ds,'session_id')
+
+    join_hemispheres = pe.JoinNode(nmutil.JoinDatasets(), 
+                                   name='join_hemispheres',
+                                   joinsource='hemi',
+                                   joinfield='input_datasets')
+    join_hemispheres.inputs.joined_dataset = 'sphere.hdf5'
+    join_hemispheres.inputs.join_hemispheres = True
+
+    workflow.connect(sphere_to_ds,'ds_file',join_hemispheres,'input_datasets')
+
+    if do_save_sphere_ds:
+        workflow.connect(join_hemispheres,'joined_dataset',datasink,'ml.@sphere')
+
+    #join_sessions = pe.JoinNode(nmutil.JoinDatasets(), 
+    #                            name='join_sessions',
+    #                            joinsource='sessions',
+    #                            joinfield='input_datasets')
+    #workflow.connect(join_hemispheres,'joined_dataset',join_sessions,'input_datasets')
+
+    #if do_save_combined_ds:
+    #    pass
+                                  
 
 def create_within_subject_workflow(name,
                                    work_dir,
