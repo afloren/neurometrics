@@ -1,3 +1,5 @@
+import os
+
 import nipype.interfaces.io as nio
 import nipype.interfaces.freesurfer as fs
 import nipype.interfaces.dcmstack as ds
@@ -315,12 +317,13 @@ def create_preprocess_workflow(name,
     return workflow
 
 def create_ml_preprocess_workflow(name,
+                                  project_dir,
                                   work_dir,
                                   sessions_file,
                                   session_template,
                                   fs_dir,
-                                  fwhm=[2],
-                                  ico_order=[4],
+                                  fwhm_vals=[2],
+                                  ico_order_vals=[4],
                                   do_save_vol_ds = False,
                                   do_save_smooth_vol_ds = False,
                                   do_save_surface_smooth_vol_ds = False,
@@ -328,7 +331,8 @@ def create_ml_preprocess_workflow(name,
                                   do_save_smooth_surface_ds = False,
                                   do_save_sphere_nifti = False,
                                   do_save_sphere_ds = True,
-                                  do_save_combined_ds = False):
+                                  do_save_join_sessions_ds = True,
+                                  do_save_join_subjects_ds = True):
 
     #initialize workflow                                                                                   
     workflow = pe.Workflow(name=name)
@@ -376,7 +380,7 @@ def create_ml_preprocess_workflow(name,
         workflow.connect(vol_to_ds,'ds_file',datasink,'ml.@vol')
 
     fwhm = pe.Node(util.IdentityInterface(fields=['fwhm']), name='fwhm')
-    fwhm.iterables = [('fwhm',fwhm)]
+    fwhm.iterables = [('fwhm',fwhm_vals)]
 
     if do_save_smooth_vol_ds:
         smooth_vol = pe.Node(interface=fs.MRIConvert(), name='smooth_vol')
@@ -462,7 +466,7 @@ def create_ml_preprocess_workflow(name,
     
 
     ico_order = pe.Node(util.IdentityInterface(fields=['ico_order']), name='ico_order')
-    ico_order.iterables = [('ico_order',ico_order)]
+    ico_order.iterables = [('ico_order',ico_order_vals)]
 
     to_sphere = pe.Node(fs.SurfaceTransform(), name='to_sphere')
     to_sphere.inputs.target_subject = 'ico'
@@ -506,15 +510,32 @@ def create_ml_preprocess_workflow(name,
     if do_save_sphere_ds:
         workflow.connect(join_hemispheres,'joined_dataset',datasink,'ml.@sphere')
 
-    #join_sessions = pe.JoinNode(nmutil.JoinDatasets(), 
-    #                            name='join_sessions',
-    #                            joinsource='sessions',
-    #                            joinfield='input_datasets')
-    #workflow.connect(join_hemispheres,'joined_dataset',join_sessions,'input_datasets')
+    join_sessions = pe.JoinNode(nmutil.JoinDatasets(), 
+                                name='join_sessions',
+                                joinsource='sessions',
+                                joinfield='input_datasets')
+    workflow.connect(join_hemispheres,'joined_dataset',join_sessions,'input_datasets')
 
-    #if do_save_combined_ds:
-    #    pass
-                                  
+    if do_save_join_sessions_ds:
+        join_sessions_sink = pe.Node(nio.DataSink(), name='join_sessions_sink')
+        join_sessions_sink.inputs.parameterization = False
+        join_sessions_sink.inputs.base_directory = os.path.join(project_dir,'ml')
+        workflow.connect(subjects,'subject_id',join_sessions_sink,'container')
+        workflow.connect(join_sessions,'joined_dataset',join_sessions_sink,'@join_sessions')
+
+    join_subjects = pe.JoinNode(nmutil.JoinDatasets(),
+                                name='join_subjects',
+                                joinsource='subjects',
+                                joinfield='input_datasets')
+    workflow.connect(join_sessions,'joined_dataset',join_subjects,'input_datasets')
+
+    if do_save_join_subjects_ds:
+        join_subjects_sink = pe.Node(nio.DataSink(), name='join_subjects_sink')
+        join_subjects_sink.inputs.parameterization = False
+        join_subjects_sink.inputs.base_directory = os.path.join(project_dir,'ml')
+        workflow.connect(join_subjects,'joined_dataset',join_subjects_sink,'@join_subjects')
+
+    return workflow
 
 def create_within_subject_workflow(name,
                                    work_dir,

@@ -91,7 +91,7 @@ class NiftiToDataset(BaseInterface):
 class JoinDatasetsInputSpec(BaseInterfaceInputSpec):
     input_datasets = InputMultiPath(File(desc='datasets to be joined', exists=True, mandatory=True))
     join_hemispheres = traits.Bool(desc='whether we are joining hemispheres or not')
-    joined_dataset = traits.String('dataset.hdf5', desc='name of joined dataset file') 
+    joined_dataset = traits.String('dataset.hdf5', desc='name of joined dataset file', usedefault=True) 
 
 class JoinDatasetsOutputSpec(TraitedSpec):
     joined_dataset = File(desc='joined dataset', exists=True)
