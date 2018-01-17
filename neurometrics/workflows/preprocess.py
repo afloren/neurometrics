@@ -420,6 +420,7 @@ def create_ml_preprocess_workflow(name,
     to_surface.inputs.sampling_method = 'average'
     to_surface.inputs.sampling_range = (0., 1., 0.1)
     to_surface.inputs.sampling_units = 'frac'
+    to_surface.inputs.subjects_dir = fs_dir
     workflow.connect(hemi,'hemi',to_surface,'hemi')
     workflow.connect(get_files,'nifti_file',to_surface,'source_file')
     workflow.connect(get_files,'reg_file',to_surface,'reg_file')
@@ -442,6 +443,7 @@ def create_ml_preprocess_workflow(name,
         workflow.connect(join_surfaces,'joined_dataset',datasink,'ml.@surface')
 
     smooth_surface = pe.Node(fs.SurfaceSmooth(), name='smooth_surface')
+    smooth_surface.inputs.subjects_dir = fs_dir
     workflow.connect(to_surface,'out_file',smooth_surface,'in_file')
     workflow.connect(sessions,'subject_id',smooth_surface,'subject_id')
     workflow.connect(hemi,'hemi',smooth_surface,'hemi')
@@ -470,6 +472,7 @@ def create_ml_preprocess_workflow(name,
 
     to_sphere = pe.Node(fs.SurfaceTransform(), name='to_sphere')
     to_sphere.inputs.target_subject = 'ico'
+    to_sphere.inputs.subjects_dir = fs_dir
     workflow.connect(hemi,'hemi',to_sphere,'hemi')
     workflow.connect(smooth_surface,'out_file',to_sphere,'source_file')
     workflow.connect(subjects,'subject_id',to_sphere,'source_subject')
@@ -487,6 +490,7 @@ def create_ml_preprocess_workflow(name,
     transform_annot = pe.Node(fs.SurfaceTransform(), name='transform_annot')
     transform_annot.inputs.source_subject = 'fsaverage'
     transform_annot.inputs.target_subject = 'ico'
+    transform_annot.inputs.subjects_dir = fs_dir
     workflow.connect(hemi,'hemi',transform_annot,'hemi')
     workflow.connect(get_annot_file,'annot_file',transform_annot,'source_annot_file')
     workflow.connect(ico_order,'ico_order',transform_annot,'target_ico_order')
