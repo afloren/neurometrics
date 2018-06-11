@@ -43,7 +43,7 @@ def retrain_estimator(estimator, X, y, n,
     fit_params = fit_params if fit_params is not None else {}
     estimators = [clone(estimator).set_params(nn__random_state=i).fit(X_train,y_train,**fit_params) for i in range(n)]
     scores = [scorer(e,X_test,y_test) for e in estimators]
-    print scores
+    print(scores) #TODO: use logger
     return estimators[np.argmax(scores)]
 
 class MLP(BaseEstimator, ClassifierMixin):
