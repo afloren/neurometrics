@@ -81,7 +81,8 @@ class MLP(BaseEstimator, ClassifierMixin):
         return self.estimator.predict_proba(X)
 
 class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
-    def __init__(self):
+    def __init__(self, matlab='matlab'):
+        self.matlab = matlab
         self.tmp_dir = mkdtemp()
 
     def fit(self, X, y):
@@ -89,6 +90,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
         tmp_file = path.join(self.tmp_dir,'net.mat')
         results = matlab_command(("net = fitNN(X,y);"
                                   "save(tmp_file,'net');"),
+                                 matlab = self.matlab,
                                  X = X.T,
                                  y = targets.T,
                                  tmp_file = tmp_file)
@@ -99,6 +101,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
         tmp_file = path.join(self.tmp_dir,'net.mat')
         results = matlab_command(("load(tmp_file);"
                                   "y_pred = vec2ind(net(X));"),
+                                 matlab = self.matlab,
                                  X = X.T,
                                  tmp_file = tmp_file)
         return (results['y_pred'].ravel() - 1) #dammit matlab...
@@ -107,6 +110,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
         tmp_file = path.join(self.tmp_dir,'net.mat')
         results = matlab_command(("load(tmp_file);"
                                   "y = net(X);"),
+                                 matlab = self.matlab,
                                  X = X.T,
                                  tmp_file = tmp_file)
         return results['y'].T
@@ -115,6 +119,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
         tmp_file = path.join(self.tmp_dir,'net.mat')
         results = matlab_command(("load(tmp_file);"
                                   "output = net(X);"),
+                                 matlab = self.matlab,
                                  X = X.T,
                                  tmp_file = tmp_file)
         return results['output']
@@ -123,6 +128,7 @@ class FeedForwardNeuralNetwork(BaseEstimator, ClassifierMixin):
         tmp_file = path.join(self.tmp_dir,'net.mat')
         results = matlab_command(("load(tmp_file);"
                                   "Savg = ffnnSensitivityAnalysis(net,inputs);"),
+                                 matlab = self.matlab,
                                  inputs = X.T,
                                  tmp_file = tmp_file)
         return results['Savg']

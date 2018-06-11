@@ -322,6 +322,7 @@ def create_ml_preprocess_workflow(name,
                                   sessions_file,
                                   session_template,
                                   fs_dir,
+                                  annot_template='{subject_id}/label/{hemi}.aparc.a2009s.annot',
                                   fwhm_vals=[2],
                                   ico_order_vals=[4],
                                   do_save_vol_ds = False,
@@ -481,7 +482,7 @@ def create_ml_preprocess_workflow(name,
     if do_save_sphere_nifti:
         workflow.connect(to_sphere,'out_file',datasink,'surf.@sphere')
 
-    template = {'annot_file':'{subject_id}/label/{hemi}.aparc.a2009s.annot'}
+    template = {'annot_file': annot_template}
     get_annot_file = pe.Node(nio.SelectFiles(template), name='get_annot_file')
     get_annot_file.inputs.base_directory = fs_dir
     get_annot_file.inputs.subject_id = 'fsaverage'
